@@ -1,6 +1,6 @@
 class Hp_Potion():
     
-    def __init__(self, character, name="HP Potion", description="Restores 20 HP.", restore=25):
+    def __init__(self, character, name="HP Potion", description="Restores 20 HP.", restore=20):
         self.name = name
         self.description = description
         self.restore = restore
