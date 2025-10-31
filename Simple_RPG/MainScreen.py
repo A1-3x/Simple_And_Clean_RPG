@@ -3,6 +3,9 @@ import random
 from arcade.types import Rect
 from Hp_Potion import Hp_Potion
 from Mp_Potion import Mp_Potion
+from PIL import Image
+from io import BytesIO
+
 
 # --- Scaling and room size ---
 SCALE = 2
@@ -138,21 +141,163 @@ class MainScreen(arcade.View):
         
         self.hp_potion = Hp_Potion(self.character)
         self.mp_potion = Mp_Potion(self.character)
+        
+        self.in_fight = False       # Are we currently in a fight?
+        self.fight_enemy = None     # Optional: enemy sprite / data
+        self.fight_alpha = 0        # Fade for room background during fight
+        self.fight_fade_speed = 300
+        self.fight_text_alpha = 0
+        
+        # cache for current room background
+        self.room_texture = None
+
+
+        # --- Sprite sheet info ---
+        sheet_path = "Simple_RPG/Art/Enemies/Necromancer.png"
+        frame_width = 160
+        frame_height = 128
+        columns = 17
+        rows = 7
+
+        # Load the sheet as PIL image
+        sheet_image = Image.open(sheet_path).convert("RGBA")
+        sheet_width, sheet_height = sheet_image.size
+
+        # Store all frames as arcade.Textures
+        self.frames = []
+
+        for row in range(rows):
+            for col in range(columns):
+                # Calculate box (left, upper, right, lower)
+                left = col * frame_width
+                top = sheet_height - (row + 1) * frame_height  # top-left origin
+                right = left + frame_width
+                bottom = top + frame_height
+                frame_image = sheet_image.crop((left, top, right, bottom))
+
+                # Save to in-memory file
+                temp_file = BytesIO()
+                frame_image.save(temp_file, format="PNG")
+                temp_file.seek(0)
+
+                # Load as arcade.Texture
+                texture = arcade.load_texture(temp_file)
+                self.frames.append(texture)
+
+        # --- Create enemy sprite ---
+        self.fight_enemy = arcade.Sprite()          # assign to instance variable
+        self.fight_enemy.visible = False            # hide until fight
+        self.fight_enemy.texture = self.frames[0]   # idle = first frame
+        self.fight_enemy.center_x = self.window.width / 2
+        self.fight_enemy.center_y = self.window.height / 2
+        self.fight_enemy.scale = 3.0
+        self.fight_sprites = arcade.SpriteList()
+        self.fight_sprites.append(self.fight_enemy)
+        
+        # Tracks which fight button is highlighted
+        self.fight_menu_index = 0
+        self.fight_buttons = ["Attack", "Items"]
 
     
     def on_show(self):
         arcade.set_background_color(arcade.color.BLACK)
+        
+    def draw_popup_item_menu(self):
+        """Draws the Item menu popup, works in overworld and battle."""
+        cx = self.window.width / 2
+        cy = self.window.height / 2
+        h = 220
+        w = 400
 
+        # Outer box
+        arcade.draw_lrbt_rectangle_filled(cx - w/2, cx + w/2, cy - h/2, cy + h/2, arcade.color.BLACK)
+        arcade.draw_lrbt_rectangle_outline(cx - w/2, cx + w/2, cy - h/2, cy + h/2, arcade.color.RED, 3)
+
+        if self.popup_state == "Item":
+                    equip_lines = [
+                        f"{self.character.items['HP Potion'][0]}: {self.character.items['HP Potion'][1]}",
+                        f"{self.character.items['MP Potion'][0]}: {self.character.items['MP Potion'][1]}",
+                    ]
+                    for i, line in enumerate(equip_lines):
+                        arcade.draw_text(
+                            line,
+                            cx,
+                            cy + h/2 - 40 - i * 30,
+                            arcade.color.WHITE,
+                            16,
+                            anchor_x="center"
+                        )
+        
+        # Buttons
+        num_buttons = len(self.popup_options)
+        box_w = 200 if num_buttons == 1 else 100
+        box_h = 60
+        spacing = 20 if num_buttons > 1 else 0
+        total_width = num_buttons * box_w + (num_buttons - 1) * spacing
+        start_x = cx - total_width / 2
+        box_center_y = cy - h / 2 + 50
+
+        for i, option in enumerate(self.popup_options):
+            bx_left = start_x + i * (box_w + spacing)
+            bx_right = bx_left + box_w
+            by_top = box_center_y + box_h/2
+            by_bottom = box_center_y - box_h/2
+
+            outline_color = arcade.color.YELLOW if i == self.menu_index else arcade.color.RED
+            arcade.draw_lrbt_rectangle_filled(bx_left, bx_right, by_bottom, by_top, arcade.color.BLACK)
+            arcade.draw_lrbt_rectangle_outline(bx_left, bx_right, by_bottom, by_top, outline_color, 2)
+            arcade.draw_text(option, (bx_left + bx_right)/2, box_center_y - 8, arcade.color.WHITE, 16, anchor_x="center")
+
+
+    def draw_fight_buttons(self):
+        screen_width, screen_height = self.window.get_size()
+        cx = screen_width / 2
+        h = 100
+        cy = h / 2 + 10
+        w = 400
+        arcade.draw_lrbt_rectangle_filled(cx - w/2, cx + w/2, cy - h/2, cy + h/2, arcade.color.BLACK)
+        arcade.draw_lrbt_rectangle_outline(cx - w/2, cx + w/2, cy - h/2, cy + h/2, arcade.color.RED, 3)
+
+        buttons = ["Attack", "Items"]
+        box_w = 150
+        spacing = 20
+        start_x = cx - (len(buttons) * box_w + (len(buttons) - 1) * spacing)/2
+        for i, option in enumerate(buttons):
+            bx_left = start_x + i * (box_w + spacing)
+            bx_right = bx_left + box_w
+            by_top = cy + h/2 - 10
+            by_bottom = cy - h/2 + 10
+
+            outline_color = arcade.color.YELLOW if i == self.fight_menu_index else arcade.color.RED
+            arcade.draw_lrbt_rectangle_filled(bx_left, bx_right, by_bottom, by_top, arcade.color.BLACK)
+            arcade.draw_lrbt_rectangle_outline(bx_left, bx_right, by_bottom, by_top, outline_color, 2)
+            arcade.draw_text(option, (bx_left+bx_right)/2, cy-8, arcade.color.WHITE, 16, anchor_x="center")
+
+    
+    def draw_loot_popup(self):
+        """Draws the loot popup at the bottom of the screen."""
+        if self.loot_popup_state != "loot":
+            return
+
+        cx = self.window.width / 2
+        cy = 100
+        w, h = 400, 60
+        arcade.draw_lrbt_rectangle_filled(cx - w/2, cx + w/2, cy - h/2, cy + h/2, arcade.color.BLACK)
+        arcade.draw_lrbt_rectangle_outline(cx - w/2, cx + w/2, cy - h/2, cy + h/2, arcade.color.YELLOW, 2)
+        arcade.draw_text(self.loot_popup_text, cx, cy - 8, arcade.color.WHITE, 16, anchor_x="center")
+
+    
     def on_draw(self):
         self.clear()
+        
+        screen_width, screen_height = self.window.get_size()
         
         # Draw room background
         art_title = "_".join(option for _, option, _ in self.maze[self.character.currentPosition][0] if option != "Backward")
         if art_title == "":
             art_title = "Backward"
-        texture = arcade.load_texture(f"Simple_RPG/Art/Room_Backgrounds/{art_title}.png")
-        screen_width, screen_height = self.window.get_size()
-        
+        if (not hasattr(self, "room_texture") or self.room_texture is None):
+            self.room_texture = arcade.load_texture(f"Simple_RPG/Art/Room_Backgrounds/{art_title}.png")
         # Create a rectangle covering the whole screen
         rect = Rect(
             left=0,
@@ -167,7 +312,7 @@ class MainScreen(arcade.View):
         
         # Draw texture with alpha
         arcade.draw_texture_rect(
-            texture,
+            self.room_texture,
             rect,
             alpha=int(self.bg_alpha)  # room fade
             )
@@ -376,6 +521,7 @@ class MainScreen(arcade.View):
                             16,
                             anchor_x="center"
                         ).draw()
+                        
         # --- Show loot/investigation popup (if active) ---
         if self.loot_popup_state == "loot":
             cx = self.window.width / 2
@@ -403,8 +549,40 @@ class MainScreen(arcade.View):
                 16,
                 anchor_x="center"
             )
+            
+        # Battle Scene
+        if self.in_fight:
+            self.fight_enemy.visible = True
 
+            # Draw room background properly scaled to window
+            if self.room_texture:
+                arcade.draw_texture_rect(
+                    self.room_texture,
+                    arcade.XYWH(
+                        screen_width / 2,
+                        screen_height / 2,
+                        screen_width,
+                        screen_height
+                    ),
+                    alpha=int(self.fight_alpha)
+                )
+                
+            # Draw enemy sprite (with fade-in)
+            if hasattr(self, "fight_sprites") and self.fight_sprites:
+                for sprite in self.fight_sprites:
+                    sprite.alpha = int(self.fight_text_alpha)
+                self.fight_sprites.draw()
+            
+             # --- Draw item popup on top if active ---
+            if self.popup_state == "Item":
+                self.draw_popup_item_menu()   # Draws the Item menu above everything
 
+            # --- Draw fight buttons only if item menu is not active ---
+            else:
+                self.draw_fight_buttons()
+                
+            # --- Draw loot popup if active ---
+            self.draw_loot_popup()
 
     def generate_Item(self):
         items = []
@@ -415,58 +593,83 @@ class MainScreen(arcade.View):
         if num == 1 or num == 2:
             items.append("MP Potion")
         return items
+    
+    
+    def try_fight(self):
+        chance = 1.0  # 30% chance for a fight
+        if random.random() < chance:
+            self.start_fight()
+            
+    def start_fight(self):
+        self.in_fight = True
+        self.fight_alpha = 0       # fade out current room
+        self.fight_text_alpha = 0
+        
+        # Position sprite in middle
+        screen_width, screen_height = self.window.get_size()
+        self.fight_enemy.center_x = screen_width / 2
+        self.fight_enemy.center_y = screen_height / 2 + 20
+        self.fight_enemy.visible = True
+        
+        # Ensure sprite list contains the enemy
+        if not self.fight_sprites:
+            self.fight_sprites = arcade.SpriteList()
+            self.fight_sprites.append(self.fight_enemy)
+        
+        # Clear bottom options
+        self.popup_state = None
+        self.loot_popup_state = None
+        
+        
+    def open_item_menu(self):
+        """Opens the Item menu popup."""
+        self.popup_state = "Item"
+        self.menu_index = 0
+        self.popup_options = ["Use HP", "Use MP", "EXIT"]
+        
+        
+    def handle_item_menu_selection(self, selected):
+        """Handles using items (HP/MP potions) and closing the item menu."""
+        if selected == "EXIT":
+            self.popup_state = None
+            return
+
+        # Use HP potion
+        if selected == "Use HP":
+            if self.character.items.get("HP Potion", [None, 0])[1] > 0:
+                healed = self.hp_potion.use()
+                self.loot_popup_text = f"You used an HP Potion and restored {healed} HP!"
+            else:
+                self.loot_popup_text = "You have no HP Potions left!"
+
+        # Use MP potion
+        elif selected == "Use MP":
+            if self.character.items.get("MP Potion", [None, 0])[1] > 0:
+                restored = self.mp_potion.use()
+                self.loot_popup_text = f"You used an MP Potion and restored {restored} MP!"
+            else:
+                self.loot_popup_text = "You have no MP Potions left!"
+
+        # Show the loot popup in battle
+        self.loot_popup_state = "loot"
+        self.loot_popup_timer = 0.0
 
 
     def on_key_press(self, key, modifiers):
-        # Only allow movement if fade-in is complete
+        # Only allow input if fade-in is complete
         if not self.fade_in_complete:
             return
-        
-        current = self.character.currentPosition
-        neighbors, visited, looted = self.maze[current]
-        
-        # X always toggles stats open/closed
-        if key == arcade.key.X:
-            if self.popup_state == "status":
-                self.popup_state = None
-            else:
-                self.popup_state = "status"
-                self.menu_index = 0
-                self.popup_options = self.menu_options.copy()
-            return
-        
-        # Handle Investigating
-        if key == arcade.key.Z:
-            neighbors, visited, looted = self.maze[current]
-            if looted == False:
-                loot = self.generate_Item()
-                for item in loot:
-                    self.character.pickup(item)
-                self.maze[current] = (neighbors, visited, True)
-                
-                if loot:
-                    self.loot_popup_text = "You found: " + ", ".join(loot)
-                else:
-                    self.loot_popup_text = "Nothing was found here."
-                self.loot_popup_state = "loot"
-                self.loot_popup_timer = 0.0
-            else:
-                self.loot_popup_text = "This room has already been investigated."
-                self.loot_popup_state = "loot"
-                self.loot_popup_timer = 0.0
-        
-        # Handle popup navigation
+
+        # --- Popup navigation (overworld or battle) ---
         if self.popup_state is not None:
-            # Left/right to navigate menu
             if key == arcade.key.RIGHT:
                 self.menu_index = (self.menu_index + 1) % len(self.popup_options)
             elif key == arcade.key.LEFT:
                 self.menu_index = (self.menu_index - 1) % len(self.popup_options)
-            # Enter to select
             elif key == arcade.key.ENTER:
                 selected = self.popup_options[self.menu_index]
 
-                # Status popup actions
+                # --- Status popup ---
                 if self.popup_state == "status":
                     if selected == "Exit":
                         self.popup_state = None
@@ -475,41 +678,66 @@ class MainScreen(arcade.View):
                         self.menu_index = 0
                         self.popup_options = ["EXIT"]
                     elif selected == "Item":
-                        self.popup_state = "Item"
-                        self.menu_index = 0
-                        self.popup_options = ["Use HP", "Use MP","EXIT"]
+                        self.open_item_menu()
 
-                # Equip popup actions
+                # --- Equip popup ---
                 elif self.popup_state == "equip":
                     if selected == "EXIT":
                         self.popup_state = None
-                
-                # Item popup actions
+
+                # --- Item popup ---
                 elif self.popup_state == "Item":
-                    if selected == "EXIT":
-                        self.popup_state = None
-                        
-                    elif selected == "Use HP":
-                        healed = self.hp_potion.use()
-                        if healed > 0:
-                            self.loot_popup_text = f"You used an HP Potion and restored {healed} HP!"
-                        else:
-                            self.loot_popup_text = "You have no HP Potions left!"
-                        self.loot_popup_state = "loot"
-                        self.loot_popup_timer = 0.0
-                        
-                    elif selected == "Use MP":
-                        restored = self.mp_potion.use()
-                        if restored > 0:
-                            self.loot_popup_text = f"You used an MP Potion and restored {restored} MP!"
-                        else:
-                            self.loot_popup_text = "You have no MP Potions left!"
-                        self.loot_popup_state = "loot"
-                        self.loot_popup_timer = 0.0
-                        
+                    self.handle_item_menu_selection(selected)
+
+            return  # Skip other inputs while popup is open
+
+        # --- Battle menu navigation (not in popup) ---
+        if self.in_fight:
+            if key == arcade.key.RIGHT:
+                self.fight_menu_index = (self.fight_menu_index + 1) % len(self.fight_buttons)
+            elif key == arcade.key.LEFT:
+                self.fight_menu_index = (self.fight_menu_index - 1) % len(self.fight_buttons)
+            elif key == arcade.key.ENTER:
+                selected = self.fight_buttons[self.fight_menu_index]
+                if selected == "Attack":
+                    # TODO: perform attack
+                    pass
+                elif selected == "Items":
+                    self.open_item_menu()
+                    self.fight_menu_index = 0  # deselect fight buttons
             return
-        
-        # Movement Handling
+
+        # --- Overworld X key toggles status ---
+        if key == arcade.key.X:
+            if self.popup_state == "status":
+                self.popup_state = None
+            else:
+                self.popup_state = "status"
+                self.menu_index = 0
+                self.popup_options = self.menu_options.copy()
+            return
+
+        # --- Overworld Z key investigates rooms ---
+        if key == arcade.key.Z:
+            current = self.character.currentPosition
+            neighbors, visited, looted = self.maze[current]
+            if not looted:
+                loot = self.generate_Item()
+                for item in loot:
+                    self.character.pickup(item)
+                self.maze[current] = (neighbors, visited, True)
+
+                self.loot_popup_text = "You found: " + ", ".join(loot) if loot else "Nothing was found here."
+                self.loot_popup_state = "loot"
+                self.loot_popup_timer = 0.0
+            else:
+                self.loot_popup_text = "This room has already been investigated."
+                self.loot_popup_state = "loot"
+                self.loot_popup_timer = 0.0
+
+            return
+
+        # --- Movement handling ---
         dir_map = {
             arcade.key.LEFT: "Left",
             arcade.key.RIGHT: "Right",
@@ -519,18 +747,16 @@ class MainScreen(arcade.View):
         direction = dir_map.get(key)
         if not direction:
             return
-        
-        # --- Only reset fade if a valid move occurs ---
+
+        current = self.character.currentPosition
+        neighbors, visited, looted = self.maze[current]
         moved = False
 
         for target, dir_name, conn_label in neighbors:
             if dir_name == direction:
-                # --- Mark the current room before leaving ---
                 curr_neighbors, curr_visited, curr_looted = self.maze[current]
-                # Keep looted status as-is (don't reset it)
                 self.maze[current] = (curr_neighbors, True, curr_looted)
-                
-                # Update player position
+
                 self.character.currentPosition = target
                 n, visited, looted = self.maze[target]
                 self.maze[target] = (n, True, looted)
@@ -540,14 +766,17 @@ class MainScreen(arcade.View):
                     if not visited:
                         self.connections[conn_label] = (True, data)
                 moved = True
+
+                # Check for fight
+                self.try_fight()
                 break
-            
-        # Reset fade for new room
-        if moved == True:
+
+        if moved:
             self.bg_alpha = 0
             self.text_alpha = 0
             self.text_timer = 0
-            self.fade_in_complete = False 
+            self.fade_in_complete = False
+
     
     def on_update(self, delta_time: float):
         """Update fade animation each frame."""
@@ -573,6 +802,15 @@ class MainScreen(arcade.View):
             self.loot_popup_timer += delta_time
             if self.loot_popup_timer >= self.loot_popup_duration:
                 self.loot_popup_state = None
-            
         
-        
+        # --- Battle Fading ---     
+        if self.in_fight:
+            if self.fight_alpha < 255:
+                self.fight_alpha += self.fight_fade_speed * delta_time
+                if self.fight_alpha > 255:
+                    self.fight_alpha = 255
+            if self.fight_text_alpha < 255:
+                self.fight_text_alpha += self.fight_fade_speed * delta_time
+                if self.fight_text_alpha > 255:
+                    self.fight_text_alpha = 255
+                    
